@@ -1,0 +1,2168 @@
+import React, { useState, useEffect, useRef, useCallback } from "react";
+import { View, ScrollView, StyleSheet, Text, TouchableOpacity, TextInput, Alert, ActivityIndicator, Platform, Modal } from "react-native";
+import AsyncStorage from "@react-native-async-storage/async-storage";
+import { Feather, MaterialCommunityIcons, Ionicons } from "@expo/vector-icons";
+import ConfettiCannon from "react-native-confetti-cannon";
+import NetInfo from "@react-native-community/netinfo";
+import firebase from "firebase/compat/app";
+import "firebase/compat/firestore";
+import { SafeAreaView, SafeAreaProvider } from "react-native-safe-area-context";
+import { Picker } from '@react-native-picker/picker';
+
+// Import the new animation libraries
+import Animated, { 
+  useSharedValue, 
+  useAnimatedStyle, 
+  withTiming, 
+  withSpring,
+  Easing,
+  runOnJS,
+  interpolate
+} from 'react-native-reanimated';
+
+// ========== CONSTANTS & HELPERS ==========
+
+const commonUKBreeds = [
+  "Labrador Retriever",
+  "Cocker Spaniel",
+  "French Bulldog",
+  "Bulldog",
+  "Dachshund",
+  "German Shepherd",
+  "Jack Russell Terrier",
+  "Staffordshire Bull Terrier",
+  "Border Collie",
+  "Golden Retriever"
+];
+
+const breedTips = {
+  "Labrador Retriever": [
+    "Labradors love water – include swimming in their routine.",
+    "They respond well to food rewards but watch their weight."
+  ],
+  "Cocker Spaniel": [
+    "Spaniels are energetic and need regular, varied exercise.",
+    "Mental stimulation is crucial for this clever breed."
+  ],
+  "French Bulldog": [
+    "Short walks suit their breathing; avoid heat.",
+    "They thrive on companionship and gentle training."
+  ],
+  "Bulldog": [
+    "Keep sessions short and allow rest breaks.",
+    "Monitor for overheating, especially in warm weather."
+  ],
+  "Dachshund": [
+    "Protect their back: avoid stairs and jumping.",
+    "Short, positive training sessions work best."
+  ],
+  "German Shepherd": [
+    "GSDs need jobs: try agility or advanced obedience.",
+    "Early and ongoing socialisation is key."
+  ],
+  "Jack Russell Terrier": [
+    "Channel their energy into games and puzzles.",
+    "Consistent boundaries are essential."
+  ],
+  "Staffordshire Bull Terrier": [
+    "They excel with positive reinforcement.",
+    "Plenty of social play helps prevent boredom."
+  ],
+  "Border Collie": [
+    "They thrive on advanced tricks and mental work.",
+    "Provide daily tasks to keep them busy."
+  ],
+  "Golden Retriever": [
+    "Retrievers love to carry and fetch – use this in games.",
+    "Social, gentle training is most effective."
+  ]
+};
+
+const firebaseConfig = {
+  apiKey: "AIzaSyDPT2FZbLupAd9F_V1CB87i5CUl2oaULLg",
+  authDomain: "ludos-training-tracker.firebaseapp.com",
+  projectId: "ludos-training-tracker",
+  storageBucket: "ludos-training-tracker.appspot.com",
+  messagingSenderId: "599255592851",
+  appId: "1:599255592851:android:5c758bc134326f9b40c266"
+};
+
+if (!firebase.apps.length) {
+  firebase.initializeApp(firebaseConfig);
+}
+const db = firebase.firestore();
+
+const trainingStages = {
+  1: { name: "Foundation (Weeks 1-4)", range: "8-12 weeks", color: "#bbf7d0" },
+  2: { name: "Impulse Control (Weeks 5-16)", range: "12-16 weeks", color: "#dbeafe" },
+  3: { name: "Building Obedience (Weeks 17-26)", range: "4-6 months", color: "#ede9fe" },
+  4: { name: "Adolescent Phase (Weeks 27+)", range: "6-12 months", color: "#fed7aa" }
+};
+
+const weeklyPlans = {
+  1: ["Name recognition", "Crate training", "Potty training"],
+  2: ["Sit & Down", "Handling paws/ears/mouth", "Intro to leash"],
+  3: ["Meet calm dogs", "New surfaces & sounds", "Short training sessions"],
+  4: ["Basic recall (indoors)", "Continue potty/crate", "Social walk (carry if needed)"],
+  5: ["Wait & Leave it", "Loose-leash walking", "Puzzle toy intro"],
+  6: ["Sit-Stay & Down-Stay", "Recall indoors", "Traffic & bike exposure"],
+  7: ["Tug with drop-it", "Find-it game", "New sounds/social areas"],
+  8: ["Reinforce all basics", "Puzzle time", "Crate review"],
+  9: ["Recall w/ distractions", "Advanced stays", "Marker word training"],
+  10: ["Place command", "Puzzle toy advanced", "Spin trick"],
+  11: ["Scent games", "Shake trick", "Review leash & crate"],
+  12: ["Bow trick", "New distractions", "Clicker practice"],
+  13: ["Mix tricks: combo day", "Trail walk intro", "Social calm practice"],
+  14: ["Stays with duration", "Heel in quiet area", "Slow feeder puzzle"],
+  15: ["Clicker games", "Play with purpose", "Place & Stay combo"],
+  16: ["Dog-friendly cafe visit", "New location recall", "Tug with control"]
+};
+
+const dailyRoutine = {
+  morning: ["Potty break", "Breakfast", "Basic commands review"],
+  midday: ["Primary training focus", "Socialization/Exposure", "Mental stimulation"],
+  evening: ["Recall practice", "Command reinforcement", "Cool down"],
+  play: ["Structured play", "Bonding time", "Free play"]
+};
+
+const MAX_WEEKS = 16;
+
+// Utility functions
+const getCurrentStage = week => {
+  if (week <= 4) return 1;
+  if (week <= 16) return 2;
+  if (week <= 26) return 3;
+  return 4;
+};
+
+const isValidDate = (dateString) => {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateString)) return false;
+  const date = new Date(dateString + 'T00:00:00.000Z');
+  return !isNaN(date) && dateString === date.toISOString().slice(0, 10);
+};
+
+const deepEqual = (obj1, obj2) => {
+  if (obj1 === obj2) return true;
+  if (obj1 == null || obj2 == null) return false;
+  if (typeof obj1 !== typeof obj2) return false;
+  
+  if (typeof obj1 !== 'object') return obj1 === obj2;
+  
+  const keys1 = Object.keys(obj1);
+  const keys2 = Object.keys(obj2);
+  
+  if (keys1.length !== keys2.length) return false;
+  
+  for (let key of keys1) {
+    if (!keys2.includes(key)) return false;
+    if (!deepEqual(obj1[key], obj2[key])) return false;
+  }
+  
+  return true;
+};
+
+function calcDogAge(dob, weekOffset = 0, nowDate) {
+  if (!dob) return "";
+  const dobDate = new Date(dob);
+  if (isNaN(dobDate)) return "";
+  let baseTime = nowDate ? nowDate.getTime() : Date.now();
+  let virtualDate = new Date(dobDate.getTime() + weekOffset * 7 * 24 * 60 * 60 * 1000);
+  let diff = baseTime - virtualDate.getTime();
+  if (diff < 0) diff = 0;
+  let ageDate = new Date(diff);
+  let years = ageDate.getUTCFullYear() - 1970;
+  let months = ageDate.getUTCMonth();
+  let days = ageDate.getUTCDate() - 1;
+  let weeks = Math.floor(days / 7);
+  let ageStr = "";
+  if (years > 0) ageStr += `${years}y `;
+  if (months > 0) ageStr += `${months}m `;
+  if (weeks > 0) ageStr += `${weeks}w`;
+  if (!ageStr) ageStr = "0w";
+  return ageStr.trim();
+}
+
+async function updateDogInfoStorageAndFirestore(familyId, name, breed, dob) {
+  await AsyncStorage.setItem("dogName", name);
+  await AsyncStorage.setItem("dogBreed", breed);
+  await AsyncStorage.setItem("dogDob", dob);
+  if (familyId) {
+    await db.collection("families").doc(familyId).set(
+      { dogName: name, dogBreed: breed, dogDob: dob },
+      { merge: true }
+    );
+  }
+}
+
+// ========== ANIMATED COMPONENTS (NEW EFFECTS) ==========
+const AnimatedProgressBar = ({ progress, color = "#22c55e", height = 8 }) => {
+  const width = useSharedValue(0);
+
+  useEffect(() => {
+    width.value = withTiming(progress * 100, {
+      duration: 800,
+      easing: Easing.out(Easing.quad),
+    });
+  }, [progress, width]);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      width: `${width.value}%`,
+    };
+  });
+
+  return (
+    <View style={[styles.progressBar, { height }]}>
+      <Animated.View
+        style={[
+          styles.progressFill,
+          {
+            backgroundColor: color,
+          },
+          animatedStyle,
+        ]}
+      />
+    </View>
+  );
+};
+
+const AnimatedActivityCard = ({ children, isCompleted, onPress }) => {
+  const scale = useSharedValue(1);
+  const opacity = useSharedValue(1);
+
+  const handlePress = useCallback(() => {
+    scale.value = withSpring(0.95, { duration: 100 }, () => {
+      scale.value = withSpring(1, { duration: 200 });
+    });
+    
+    runOnJS(onPress)();
+  }, [onPress, scale]);
+
+  const animatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: scale.value }],
+      opacity: opacity.value,
+    };
+  });
+
+  useEffect(() => {
+    opacity.value = withTiming(isCompleted ? 0.8 : 1, { duration: 300 });
+  }, [isCompleted, opacity]);
+
+  return (
+    <TouchableOpacity onPress={handlePress} activeOpacity={0.7}>
+      <Animated.View
+        style={[
+          styles.activityCard,
+          isCompleted && styles.completedActivity,
+          animatedStyle,
+        ]}
+      >
+        {children}
+      </Animated.View>
+    </TouchableOpacity>
+  );
+};
+
+// ========== ERROR BOUNDARY ==========
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError(error) {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error, errorInfo) {
+    console.error('App Error:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <View style={styles.errorContainer}>
+          <Feather name="alert-triangle" size={48} color="#ef4444" />
+          <Text style={styles.errorTitle}>Something went wrong</Text>
+          <Text style={styles.errorText}>Please restart the app</Text>
+          <TouchableOpacity 
+            style={styles.errorButton}
+            onPress={() => this.setState({ hasError: false })}
+          >
+            <Text style={styles.errorButtonText}>Try Again</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+
+    return this.props.children;
+  }
+}
+
+// ========== MAIN APP COMPONENT ==========
+
+function MainApp() {
+  const [isOffline, setIsOffline] = useState(false);
+  
+  // Core state
+  const [familyId, setFamilyId] = useState(null);
+  const [dogName, setDogName] = useState(null);
+  const [dogBreed, setDogBreed] = useState(null);
+  const [dogDob, setDogDob] = useState(null);
+  
+  // Input states
+  const [inputId, setInputId] = useState("");
+  const [inputDog, setInputDog] = useState("");
+  const [inputBreed, setInputBreed] = useState("");
+  const [inputBreedOther, setInputBreedOther] = useState("");
+  const [inputDob, setInputDob] = useState("");
+  
+  // UI states
+  const [showDogInput, setShowDogInput] = useState(false);
+  const [familyDogLoading, setFamilyDogLoading] = useState(true);
+  const [checkingFamilyId, setCheckingFamilyId] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [syncing, setSyncing] = useState(false);
+  
+  // Edit modal states
+  const [editDogModal, setEditDogModal] = useState(false);
+  const [editDogName, setEditDogName] = useState("");
+  const [editDogBreed, setEditDogBreed] = useState("");
+  const [editDogDob, setEditDogDob] = useState("");
+  const [editDogBreedOther, setEditDogBreedOther] = useState("");
+  
+  // App data states
+  const [currentWeek, setCurrentWeek] = useState(1);
+  const [completedActivities, setCompletedActivities] = useState([]);
+  const [dailyNotes, setDailyNotes] = useState({});
+  const [viewMode, setViewMode] = useState("daily");
+  const [selectedDate, setSelectedDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [completedDailyByDate, setCompletedDailyByDate] = useState({});
+  
+  // Family and notes states
+  const [family, setFamily] = useState([
+    { id: 1, name: "Primary Trainer", editing: false },
+    { id: 2, name: "Family Member 2", editing: false },
+    { id: 3, name: "Family Member 3", editing: false }
+  ]);
+  const [newFamilyName, setNewFamilyName] = useState("");
+  const [editFamilyName, setEditFamilyName] = useState({});
+  const [editingMemberId, setEditingMemberId] = useState(null);
+  
+  const [sharedNotes, setSharedNotes] = useState([]);
+  const [newSharedNote, setNewSharedNote] = useState("");
+  const [notesLoading, setNotesLoading] = useState(false);
+  const [editingNoteId, setEditingNoteId] = useState(null);
+  const [editingNoteText, setEditingNoteText] = useState("");
+  const [currentUserName, setCurrentUserName] = useState("Wiewioreq");
+  
+  // Celebration states with animations
+  const [showDailyConfetti, setShowDailyConfetti] = useState(false);
+  const [showWeeklyConfetti, setShowWeeklyConfetti] = useState(false);
+  const [currentDogAge, setCurrentDogAge] = useState(() => calcDogAge(dogDob, 0, new Date()));
+  
+  // Animation values (NEW)
+  const fadeAnim = useSharedValue(0);
+  const slideAnim = useSharedValue(50);
+  const headerScale = useSharedValue(0.9);
+  
+  // Refs for cleanup and optimization
+  const syncTimeout = useRef();
+  const lastSyncedData = useRef({});
+  const dobInputRef = useRef(null);
+
+  // Tab switching animation (NEW)
+  const animateTabSwitch = useCallback(() => {
+    fadeAnim.value = withTiming(0, { duration: 150 }, () => {
+      slideAnim.value = 30;
+      fadeAnim.value = withTiming(1, { duration: 300 });
+      slideAnim.value = withSpring(0, { damping: 15, stiffness: 200 });
+    });
+  }, [fadeAnim, slideAnim]);
+
+  // Initialize animations (NEW)
+  useEffect(() => {
+    fadeAnim.value = withTiming(1, { duration: 500 });
+    slideAnim.value = withSpring(0, { damping: 15, stiffness: 100 });
+    headerScale.value = withSpring(1, { damping: 10, stiffness: 100 });
+  }, [fadeAnim, slideAnim, headerScale]);
+
+  // Animated styles (NEW)
+  const contentAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      opacity: fadeAnim.value,
+      transform: [{ translateY: slideAnim.value }],
+    };
+  });
+
+  const headerAnimatedStyle = useAnimatedStyle(() => {
+    return {
+      transform: [{ scale: headerScale.value }],
+    };
+  });
+
+  // Network status effect
+  useEffect(() => {
+    const unsubscribe = NetInfo.addEventListener(state => {
+      setIsOffline(!state.isConnected);
+    });
+    NetInfo.fetch().then(state => setIsOffline(!state.isConnected));
+    return () => unsubscribe();
+  }, []);
+
+  // Cleanup timeouts on unmount
+  useEffect(() => {
+    return () => {
+      if (syncTimeout.current) {
+        clearTimeout(syncTimeout.current);
+      }
+    };
+  }, []);
+
+  // Initial data loading
+  useEffect(() => {
+    (async () => {
+      try {
+        const id = await AsyncStorage.getItem("familyId");
+        const dog = await AsyncStorage.getItem("dogName");
+        const breed = await AsyncStorage.getItem("dogBreed");
+        const dob = await AsyncStorage.getItem("dogDob");
+        const username = await AsyncStorage.getItem("memberName");
+        
+        if (id) setFamilyId(id);
+        if (dog) setDogName(dog);
+        if (breed) setDogBreed(breed);
+        if (dob) setDogDob(dob);
+        if (username) setCurrentUserName(username);
+      } catch (e) {
+        console.error("Error loading dog/family data:", e);
+      }
+      
+      try {
+        const cdbd = await AsyncStorage.getItem("completedDailyByDate");
+        if (cdbd) {
+          const parsedData = JSON.parse(cdbd);
+          console.log("Loaded daily task data from storage:", parsedData);
+          setCompletedDailyByDate(parsedData);
+        }
+      } catch (e) {
+        console.error("Failed to parse completedDailyByDate:", e);
+      } finally {
+        setFamilyDogLoading(false);
+      }
+    })();
+  }, []);
+
+  // Set current user name in AsyncStorage when it changes
+  useEffect(() => {
+    if (currentUserName) {
+      AsyncStorage.setItem("memberName", currentUserName);
+    }
+  }, [currentUserName]);
+
+  // Optimized Firebase sync with deep comparison
+  const syncToFirebase = useCallback(async (data) => {
+    if (!familyId || !data) return;
+    
+    // Only sync if data actually changed
+    if (deepEqual(lastSyncedData.current, data)) {
+      setSyncing(false);
+      return;
+    }
+    
+    try {
+      setSyncing(true);
+      await db.collection("families").doc(familyId).set(data, { merge: true });
+      lastSyncedData.current = { ...data };
+      console.log("Data synced to Firebase successfully");
+    } catch (e) {
+      console.error("Failed to sync to Firebase:", e);
+      if (!isOffline) {
+        Alert.alert("Sync Error", "Failed to save changes. Please check your connection.");
+      }
+    } finally {
+      setSyncing(false);
+    }
+  }, [familyId, isOffline]);
+
+  // Consolidated debounced sync effect
+  useEffect(() => {
+    if (loading || !familyId) return;
+    
+    const dataToSync = {
+      currentWeek,
+      completedActivities,
+      dailyNotes,
+      dogName,
+      dogBreed,
+      dogDob,
+      family,
+      sharedNotes,
+      completedDailyByDate
+    };
+    
+    // Clear existing timeout
+    if (syncTimeout.current) {
+      clearTimeout(syncTimeout.current);
+    }
+    
+    // Debounce sync by 500ms
+    syncTimeout.current = setTimeout(() => {
+      syncToFirebase(dataToSync);
+      // Also save to AsyncStorage for offline access
+      AsyncStorage.setItem("completedDailyByDate", JSON.stringify(completedDailyByDate))
+        .catch(e => console.error("AsyncStorage save error", e));
+    }, 500);
+    
+  }, [currentWeek, completedActivities, dailyNotes, dogName, dogBreed, dogDob, family, sharedNotes, completedDailyByDate, syncToFirebase, loading, familyId]);
+
+  // Firebase snapshot listener with optimized updates
+  useEffect(() => {
+    if (!familyId) return;
+    
+    setLoading(true);
+    setNotesLoading(true);
+    
+    const unsubscribe = db
+      .collection("families")
+      .doc(familyId)
+      .onSnapshot(
+        docSnap => {
+          if (docSnap.exists) {
+            const data = docSnap.data();
+            
+            // Only update state if values actually changed (reduces re-renders)
+            if (data.currentWeek !== undefined && data.currentWeek !== currentWeek) {
+              setCurrentWeek(data.currentWeek);
+            }
+            
+            if (data.completedActivities && !deepEqual(data.completedActivities, completedActivities)) {
+              setCompletedActivities(data.completedActivities);
+            }
+            
+            if (data.dailyNotes && !deepEqual(data.dailyNotes, dailyNotes)) {
+              setDailyNotes(data.dailyNotes);
+            }
+            
+            if (data.family && !deepEqual(data.family, family)) {
+              setFamily(data.family);
+            }
+            
+            if (data.sharedNotes && !deepEqual(data.sharedNotes, sharedNotes)) {
+              setSharedNotes(data.sharedNotes);
+            }
+            
+            if (data.dogName && data.dogName !== dogName) {
+              setDogName(data.dogName);
+              AsyncStorage.setItem("dogName", data.dogName);
+            }
+            
+            if (data.dogBreed && data.dogBreed !== dogBreed) {
+              setDogBreed(data.dogBreed);
+              AsyncStorage.setItem("dogBreed", data.dogBreed);
+            }
+            
+            if (data.dogDob && data.dogDob !== dogDob) {
+              setDogDob(data.dogDob);
+              AsyncStorage.setItem("dogDob", data.dogDob);
+            }
+            
+            if (data.completedDailyByDate && !deepEqual(data.completedDailyByDate, completedDailyByDate)) {
+              setCompletedDailyByDate(data.completedDailyByDate);
+              AsyncStorage.setItem("completedDailyByDate", JSON.stringify(data.completedDailyByDate))
+                .catch(e => console.error("AsyncStorage save error", e));
+            }
+            
+            // Update lastSyncedData to prevent immediate re-sync
+            lastSyncedData.current = {
+              currentWeek: data.currentWeek ?? 1,
+              completedActivities: data.completedActivities ?? [],
+              dailyNotes: data.dailyNotes ?? {},
+              dogName: data.dogName,
+              dogBreed: data.dogBreed,
+              dogDob: data.dogDob,
+              family: data.family ?? [],
+              sharedNotes: data.sharedNotes ?? [],
+              completedDailyByDate: data.completedDailyByDate ?? {}
+            };
+          }
+          setLoading(false);
+          setNotesLoading(false);
+        },
+        err => {
+          setLoading(false);
+          setNotesLoading(false);
+          console.error("Firestore snapshot error:", err);
+          if (!isOffline) {
+            Alert.alert("Sync error", "Could not sync with Firebase: " + err.message);
+          }
+        }
+      );
+    
+    return unsubscribe;
+  }, [familyId]);
+
+  // Dog age calculation effect
+  useEffect(() => {
+    if (!dogDob) return;
+    const interval = setInterval(() => {
+      setCurrentDogAge(calcDogAge(dogDob, 0, new Date()));
+    }, 60 * 1000);
+    setCurrentDogAge(calcDogAge(dogDob, 0, new Date()));
+    return () => clearInterval(interval);
+  }, [dogDob]);
+
+  // Family ID submission
+  const handleFamilyIdSubmit = async () => {
+    if (!inputId.trim()) return;
+    setCheckingFamilyId(true);
+    const famId = inputId.trim();
+    
+    try {
+      const docSnap = await db.collection("families").doc(famId).get();
+      if (docSnap.exists) {
+        const data = docSnap.data();
+        if (data.dogName && data.dogBreed && data.dogDob) {
+          await AsyncStorage.setItem("familyId", famId);
+          await AsyncStorage.setItem("dogName", data.dogName);
+          await AsyncStorage.setItem("dogBreed", data.dogBreed);
+          await AsyncStorage.setItem("dogDob", data.dogDob);
+          setFamilyId(famId);
+          setDogName(data.dogName);
+          setDogBreed(data.dogBreed);
+          setDogDob(data.dogDob);
+          setCheckingFamilyId(false);
+          setShowDogInput(false);
+        } else {
+          Alert.alert("Family ID Exists", "This Family ID exists but is missing some dog info. Please contact your admin.");
+          setCheckingFamilyId(false);
+        }
+      } else {
+        Alert.alert(
+          "Create New Family?",
+          `No family found for ID "${famId}". Do you want to create a new family with this ID?`,
+          [
+            { text: "Cancel", style: "cancel", onPress: () => setCheckingFamilyId(false) },
+            { text: "Create", style: "default", onPress: () => { setShowDogInput(true); setCheckingFamilyId(false); } }
+          ]
+        );
+      }
+    } catch (e) {
+      Alert.alert("Network error", e.message);
+      setCheckingFamilyId(false);
+    }
+  };
+
+  // Dog details submission with improved validation
+  const handleDogDetailsSubmit = async () => {
+    const breedToSave = inputBreed === "Other" ? inputBreedOther.trim() : inputBreed;
+    
+    if (!inputId.trim() || !inputDog.trim() || !breedToSave || !inputDob.trim()) {
+      Alert.alert("Missing Information", "Please fill in all required fields.");
+      return;
+    }
+    
+    if (inputBreed === "Other" && !inputBreedOther.trim()) {
+      Alert.alert("Breed Required", "Please specify the breed.");
+      return;
+    }
+    
+    if (!isValidDate(inputDob.trim())) {
+      Alert.alert("Invalid Date", "Please enter a valid date in YYYY-MM-DD format.");
+      return;
+    }
+    
+    const famId = inputId.trim();
+    const dName = inputDog.trim();
+    const dBreed = breedToSave;
+    const dDob = inputDob.trim();
+    
+    try {
+      await db.collection("families").doc(famId).set({
+        dogName: dName,
+        dogBreed: dBreed,
+        dogDob: dDob,
+        family: [
+          { id: 1, name: "Primary Trainer", editing: false },
+          { id: 2, name: "Family Member 2", editing: false },
+          { id: 3, name: "Family Member 3", editing: false }
+        ]
+      }, { merge: true });
+      
+      await AsyncStorage.setItem("familyId", famId);
+      await AsyncStorage.setItem("dogName", dName);
+      await AsyncStorage.setItem("dogBreed", dBreed);
+      await AsyncStorage.setItem("dogDob", dDob);
+      
+      setFamilyId(famId);
+      setDogName(dName);
+      setDogBreed(dBreed);
+      setDogDob(dDob);
+      setShowDogInput(false);
+    } catch (e) {
+      Alert.alert("Network error", e.message);
+    }
+  };
+
+  // Daily activity toggle with optimistic UI updates and animation
+  const today = new Date().toISOString().slice(0, 10);
+  const completedToday = completedDailyByDate[today] || [];
+  
+  const toggleDailyActivity = useCallback((timeSlot, activity) => {
+    const key = `daily-${timeSlot}-${activity}`;
+    
+    setCompletedDailyByDate(prev => {
+      const prevForToday = prev[today] || [];
+      const isCompleted = prevForToday.includes(key);
+      
+      const updatedData = {
+        ...prev,
+        [today]: isCompleted 
+          ? prevForToday.filter(k => k !== key)
+          : [...prevForToday, key]
+      };
+      
+      return updatedData;
+    });
+  }, [today]);
+
+  // Notes handling with direct Firebase save
+  const addNote = useCallback(async (date, note) => {
+    const updatedNotes = { ...dailyNotes, [date]: note };
+    setDailyNotes(updatedNotes);
+    
+    // Direct save to Firebase for immediate persistence
+    if (familyId) {
+      try {
+        await db.collection("families").doc(familyId).set(
+          { dailyNotes: updatedNotes }, 
+          { merge: true }
+        );
+      } catch (e) {
+        console.error("Failed to save daily note:", e);
+      }
+    }
+  }, [dailyNotes, familyId]);
+
+  const handleAddSharedNote = async () => {
+    const trimmed = newSharedNote.trim();
+    if (!trimmed) return;
+    
+    const author = currentUserName || (family && family.length > 0 ? family[0].name : "You");
+    
+    const noteObj = {
+      id: Date.now().toString() + Math.random().toString(36).slice(2),
+      text: trimmed,
+      author,
+      timestamp: new Date().toISOString(),
+      authorId: currentUserName
+    };
+    
+    const updatedNotes = [noteObj, ...(sharedNotes || [])];
+    
+    // Optimistic update
+    setSharedNotes(updatedNotes);
+    setNewSharedNote("");
+    
+    // Save to Firebase
+    try {
+      await db.collection("families").doc(familyId).set(
+        { sharedNotes: updatedNotes },
+        { merge: true }
+      );
+    } catch (e) {
+      console.error("Failed to save shared note:", e);
+      Alert.alert("Error", "Failed to save note. Please try again.");
+      // Revert optimistic update on error
+      setSharedNotes(sharedNotes);
+      setNewSharedNote(trimmed);
+    }
+  };
+
+  const saveNoteEdit = async (noteId) => {
+    if (!editingNoteText.trim()) {
+      Alert.alert("Cannot save", "Note cannot be empty.");
+      return;
+    }
+
+    const updatedNotes = sharedNotes.map(note =>
+      note.id === noteId ? { 
+        ...note, 
+        text: editingNoteText.trim(),
+        edited: true,
+        editTimestamp: new Date().toISOString()
+      } : note
+    );
+    
+    // Optimistic update
+    setSharedNotes(updatedNotes);
+    setEditingNoteId(null);
+    setEditingNoteText("");
+    
+    try {
+      await db.collection("families").doc(familyId).set(
+        { sharedNotes: updatedNotes },
+        { merge: true }
+      );
+    } catch (e) {
+      console.error("Failed to update note:", e);
+      Alert.alert("Error", "Failed to update the note. Please try again.");
+    }
+  };
+
+  // Activity calculations
+  const allDailyKeys = Object.entries(dailyRoutine)
+    .flatMap(([slot, acts]) =>
+      acts.map(activity => `daily-${slot}-${activity}`)
+    );
+  const completedDaily = completedToday.length;
+  const dailyRate = allDailyKeys.length > 0 ? completedDaily / allDailyKeys.length : 0;
+  
+  const completionRate = (() => {
+    const currentWeekActivities = weeklyPlans[currentWeek] || [];
+    const completed = currentWeekActivities.filter(act =>
+      completedActivities.includes(`${currentWeek}-${act}`)
+    ).length;
+    return currentWeekActivities.length
+      ? completed / currentWeekActivities.length
+      : 0;
+  })();
+
+  // Confetti effects
+  useEffect(() => {
+    if (dailyRate === 1 && !showDailyConfetti) {
+      setShowDailyConfetti(true);
+      setTimeout(() => setShowDailyConfetti(false), 3500);
+    }
+  }, [dailyRate, showDailyConfetti]);
+
+  useEffect(() => {
+    const currentWeekActivities = weeklyPlans[currentWeek] || [];
+    const allDone = currentWeekActivities.every(act =>
+      completedActivities.includes(`${currentWeek}-${act}`)
+    );
+    if (allDone && !showWeeklyConfetti && currentWeekActivities.length > 0) {
+      setShowWeeklyConfetti(true);
+      setTimeout(() => setShowWeeklyConfetti(false), 3500);
+    }
+  }, [currentWeek, completedActivities, showWeeklyConfetti]);
+
+  // Activity toggle
+  const toggleActivity = useCallback((week, activity) => {
+    let key;
+    if (week === "milestone") {
+      key = `milestone-${activity}`;
+    } else {
+      key = `${week}-${activity}`;
+    }
+    setCompletedActivities(prev =>
+      prev.includes(key) ? prev.filter(k => k !== key) : [...prev, key]
+    );
+  }, []);
+
+  const currentStage = getCurrentStage(currentWeek);
+
+  // Family member management
+  const handleEditFamilyMember = useCallback(id => {
+    setEditingMemberId(id);
+    setEditFamilyName({ ...editFamilyName, [id]: family.find(f => f.id === id)?.name || "" });
+  }, [editFamilyName, family]);
+
+  const handleSaveFamilyMember = useCallback((id, newName) => {
+    setFamily(family =>
+      family.map(f =>
+        f.id === id ? { ...f, name: newName || "Unnamed", editing: false } : f
+      )
+    );
+    setEditingMemberId(null);
+  }, []);
+
+  const handleRemoveFamilyMember = useCallback(id => {
+    Alert.alert(
+      "Remove member",
+      "Are you sure you want to remove this family member?",
+      [
+        { text: "Cancel", style: "cancel" },
+        {
+          text: "Remove",
+          style: "destructive",
+          onPress: () => setFamily(family => family.filter(f => f.id !== id))
+        }
+      ]
+    );
+  }, []);
+
+  const handleAddFamilyMember = useCallback(() => {
+    if (!newFamilyName.trim()) return;
+    setFamily(family => [...family, { id: Date.now(), name: newFamilyName, editing: false }]);
+    setNewFamilyName("");
+  }, [newFamilyName]);
+
+  // Dog editing modal with improved validation
+  const openEditDogModal = useCallback(() => {
+    try {
+      const currentName = dogName || "";
+      
+      let currentBreed = "Other";
+      let currentBreedOther = "";
+      
+      if (dogBreed) {
+        if (commonUKBreeds.includes(dogBreed)) {
+          currentBreed = dogBreed;
+        } else {
+          currentBreed = "Other";
+          currentBreedOther = dogBreed;
+        }
+      }
+      
+      const currentDob = dogDob || "";
+      
+      setEditDogName(currentName);
+      setEditDogBreed(currentBreed);
+      setEditDogBreedOther(currentBreedOther);
+      setEditDogDob(currentDob);
+      setEditDogModal(true);
+      
+    } catch (e) {
+      console.error("Error opening dog edit modal:", e);
+      Alert.alert("Error", "Could not open the edit form. Please try again.");
+    }
+  }, [dogName, dogBreed, dogDob]);
+
+  const saveDogInfo = async () => {
+    // Enhanced null checks
+    const name = editDogName?.trim() || "";
+    const dob = editDogDob?.trim() || "";
+    const breedOther = editDogBreedOther?.trim() || "";
+    
+    let breedToSave = editDogBreed === "Other" ? breedOther : editDogBreed;
+    
+    if (!name || !breedToSave || !dob) {
+      Alert.alert("Missing Info", "All fields are required.");
+      return;
+    }
+    
+    if (editDogBreed === "Other" && !breedOther) {
+      Alert.alert("Breed Required", "Please specify the breed.");
+      return;
+    }
+    
+    if (!isValidDate(dob)) {
+      Alert.alert("Invalid Date", "Please enter a valid date in YYYY-MM-DD format.");
+      return;
+    }
+    
+    try {
+      setDogName(name);
+      setDogBreed(breedToSave);
+      setDogDob(dob);
+      
+      await updateDogInfoStorageAndFirestore(familyId, name, breedToSave, dob);
+      setEditDogModal(false);
+    } catch (e) {
+      Alert.alert("Network error", e.message);
+    }
+  };
+
+  const handleLogout = async () => {
+    setFamilyDogLoading(true);
+    await AsyncStorage.removeItem("familyId");
+    await AsyncStorage.removeItem("dogName");
+    await AsyncStorage.removeItem("dogBreed");
+    await AsyncStorage.removeItem("dogDob");
+    await AsyncStorage.removeItem("completedDailyByDate");
+    setFamilyId(null);
+    setDogName(null);
+    setDogBreed(null);
+    setDogDob(null);
+    setInputId("");
+    setInputDog("");
+    setInputBreed("");
+    setInputBreedOther("");
+    setInputDob("");
+    setShowDogInput(false);
+    setFamilyDogLoading(false);
+  };
+
+  const navigationTabs = [
+    { key: "daily", iconLib: Feather, iconName: "calendar" },
+    { key: "weekly", iconLib: Feather, iconName: "clock" },
+    { key: "progress", iconLib: Feather, iconName: "trending-up" },
+    { key: "family", iconLib: Feather, iconName: "users" },
+    { key: "notes", iconLib: Feather, iconName: "file-text" }
+  ];
+
+  // Tab press with animation
+  const handleTabPress = useCallback((tabKey) => {
+    setViewMode(tabKey);
+    animateTabSwitch();
+  }, [animateTabSwitch]);
+
+  // Loading states (keeping original design)
+  if (familyDogLoading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2563eb" />
+        <Text style={styles.loadingText}>Loading…</Text>
+      </View>
+    );
+  }
+
+  // Setup screens (keeping original design)
+  if (!familyId || !dogName || !dogBreed || !dogDob) {
+    if (!showDogInput) {
+      return (
+        <View style={styles.setupContainer}>
+          <Text style={styles.welcomeTitle}>Welcome!</Text>
+          <Text style={styles.setupText}>
+            Enter your Family ID to sync training data with your household.
+          </Text>
+          <Text style={styles.setupSubtext}>
+            Use the same Family ID on all your family's devices. Create a new one or enter an existing ID to join.
+          </Text>
+          <TextInput
+            placeholder="Family ID (e.g. ludo-smiths)"
+            value={inputId}
+            onChangeText={setInputId}
+            style={styles.setupInput}
+          />
+          <TouchableOpacity onPress={handleFamilyIdSubmit} style={styles.setupButton}>
+            {checkingFamilyId
+              ? <ActivityIndicator size="small" color="#fff"/>
+              : <Text style={styles.setupButtonText}>Continue</Text>
+            }
+          </TouchableOpacity>
+        </View>
+      );
+    } else {
+      return (
+        <View style={styles.setupContainer}>
+          <Text style={styles.welcomeTitle}>Create a New Family Group</Text>
+          <Text style={styles.setupText}>
+            Set your Family ID and Dog's Details (only needed once).
+          </Text>
+          <TextInput
+            value={inputId}
+            editable={false}
+            style={[styles.setupInput, styles.disabledInput]}
+          />
+          <TextInput
+            placeholder="Dog Name (e.g. Ludo)"
+            value={inputDog}
+            onChangeText={setInputDog}
+            style={styles.setupInput}
+          />
+          <View style={styles.pickerContainer}>
+            <Picker
+              selectedValue={inputBreed}
+              onValueChange={(itemValue) => setInputBreed(itemValue)}
+              style={styles.picker}
+            >
+              <Picker.Item label="Select Dog Breed..." value="" />
+              {commonUKBreeds.map(breed => (
+                <Picker.Item key={breed} label={breed} value={breed} />
+              ))}
+              <Picker.Item label="Other" value="Other" />
+            </Picker>
+          </View>
+          {inputBreed === "Other" && (
+            <TextInput
+              placeholder="Type breed"
+              value={inputBreedOther}
+              onChangeText={setInputBreedOther}
+              style={styles.setupInput}
+            />
+          )}
+          <TextInput
+            placeholder="Date of Birth (YYYY-MM-DD)"
+            value={inputDob}
+            onChangeText={setInputDob}
+            keyboardType={Platform.OS === "ios" ? "numbers-and-punctuation" : "numeric"}
+            style={styles.setupInput}
+            ref={dobInputRef}
+            maxLength={10}
+          />
+          <TouchableOpacity onPress={handleDogDetailsSubmit} style={styles.setupButton}>
+            <Text style={styles.setupButtonText}>Create Family</Text>
+          </TouchableOpacity>
+        </View>
+      );
+    }
+  }
+
+  if (loading) {
+    return (
+      <View style={styles.loadingContainer}>
+        <ActivityIndicator size="large" color="#2563eb" />
+        <Text style={styles.loadingText}>Loading training progress…</Text>
+      </View>
+    );
+  }
+
+  return (
+    <SafeAreaView style={styles.container} edges={['top', 'bottom']}>
+      <View style={styles.mainContent}>
+        <Animated.ScrollView 
+          contentContainerStyle={styles.scrollContent}
+          style={contentAnimatedStyle}
+        >
+          {isOffline && (
+            <View style={styles.offlineBanner}>
+              <Feather name="wifi-off" size={18} color="#fff" />
+              <Text style={styles.offlineText}>You are offline. Changes will sync when back online.</Text>
+            </View>
+          )}
+          
+          {showDailyConfetti && (
+            <>
+              <ConfettiCannon key="daily-confetti" count={120} origin={{x: 200, y: 0}} fadeOut autoStart />
+              <View style={styles.celebrationBanner}>
+                <Feather name="award" size={30} color="#f59e42" />
+                <Text style={styles.celebrationText}>Daily Goal Complete! Well done!</Text>
+              </View>
+            </>
+          )}
+
+          {showWeeklyConfetti && (
+            <>
+              <ConfettiCannon key="weekly-confetti" count={200} origin={{x: 200, y: 0}} fadeOut autoStart />
+              <View style={styles.celebrationBanner}>
+                <Feather name="star" size={30} color="#f59e42" />
+                <Text style={styles.celebrationText}>Week Complete! Amazing progress!</Text>
+              </View>
+            </>
+          )}
+
+          {/* Header Section with animations */}
+          <Animated.View style={[styles.headerSection, headerAnimatedStyle]}>
+            <View style={styles.headerContent}>
+              <View style={styles.dogInfo}>
+                <Text style={styles.dogName}>{dogName}</Text>
+                <Text style={styles.dogDetails}>{dogBreed} • {currentDogAge}</Text>
+                <View style={styles.connectionStatus}>
+                  <View style={[styles.statusDot, isOffline ? styles.offline : styles.online]} />
+                  <Text style={styles.statusText}>
+                    {syncing ? "Syncing..." : isOffline ? "Offline" : "Online"}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity onPress={openEditDogModal} style={styles.editButton}>
+                <Feather name="edit-2" size={18} color="#666" />
+              </TouchableOpacity>
+            </View>
+          </Animated.View>
+
+          {/* Content based on view mode - keeping original structure with animations */}
+          {viewMode === "daily" && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Today's Training</Text>
+                <Text style={styles.sectionSubtitle}>
+                  {new Date().toLocaleDateString('en-GB', { 
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                  })}
+                </Text>
+              </View>
+              
+              {/* Progress bar with animation */}
+              <View style={styles.progressSection}>
+                <View style={styles.progressHeader}>
+                  <Text style={styles.progressTitle}>Daily Progress</Text>
+                  <Text style={styles.progressPercentage}>{Math.round(dailyRate * 100)}%</Text>
+                </View>
+                <AnimatedProgressBar progress={dailyRate} />
+                <Text style={styles.progressDetails}>
+                  {completedDaily} of {allDailyKeys.length} activities completed
+                </Text>
+              </View>
+
+              {/* Daily activities with animated cards */}
+              {Object.entries(dailyRoutine).map(([timeSlot, activities]) => (
+                <View key={timeSlot} style={styles.timeSlotSection}>
+                  <Text style={styles.timeSlotTitle}>
+                    {timeSlot.charAt(0).toUpperCase() + timeSlot.slice(1)}
+                  </Text>
+                  {activities.map(activity => {
+                    const key = `daily-${timeSlot}-${activity}`;
+                    const isCompleted = completedToday.includes(key);
+                    return (
+                      <AnimatedActivityCard
+                        key={activity}
+                        isCompleted={isCompleted}
+                        onPress={() => toggleDailyActivity(timeSlot, activity)}
+                      >
+                        <View style={styles.activityContent}>
+                          <Feather
+                            name={isCompleted ? "check-circle" : "circle"}
+                            size={24}
+                            color={isCompleted ? "#22c55e" : "#94a3b8"}
+                          />
+                          <Text style={[
+                            styles.activityText,
+                            isCompleted && styles.completedText
+                          ]}>
+                            {activity}
+                          </Text>
+                        </View>
+                      </AnimatedActivityCard>
+                    );
+                  })}
+                </View>
+              ))}
+            </View>
+          )}
+
+          {viewMode === "weekly" && (
+            <View style={styles.section}>
+              <View style={styles.sectionHeader}>
+                <Text style={styles.sectionTitle}>Week {currentWeek} Training</Text>
+                <Text style={styles.sectionSubtitle}>
+                  {trainingStages[currentStage].name}
+                </Text>
+              </View>
+              
+              <View `style={styles.progressSection}>`
+                <View style={styles.progressHeader}>
+                  <Text style={styles.progressTitle}>Weekly Progress</Text>
+                  <Text style={styles.progressPercentage}>{Math.round(completionRate * 100)}%</Text>
+                </View>
+                <AnimatedProgressBar progress={completionRate} />
+                <Text style={styles.progressDetails}>
+                  {weeklyPlans[currentWeek] ? 
+                    weeklyPlans[currentWeek].filter(act => 
+                      completedActivities.includes(`${currentWeek}-${act}`)
+                    ).length : 0
+                  } of {weeklyPlans[currentWeek]?.length || 0} goals completed
+                </Text>
+              </View>
+
+              {(weeklyPlans[currentWeek] || []).map((activity, index) => {
+                const activityId = `${currentWeek}-${activity}`;
+                const isCompleted = completedActivities.includes(activityId);
+                return (
+                  <AnimatedActivityCard
+                    key={index}
+                    isCompleted={isCompleted}
+                    onPress={() => toggleActivity(currentWeek, activity)}
+                  >
+                    <View style={styles.activityContent}>
+                      <Feather
+                        name={isCompleted ? "check-circle" : "circle"}
+                        size={24}
+                        color={isCompleted ? "#22c55e" : "#94a3b8"}
+                      />
+                      <Text style={[
+                        styles.activityText,
+                        isCompleted && styles.completedText
+                      ]}>
+                        {activity}
+                      </Text>
+                    </View>
+                  </AnimatedActivityCard>
+                );
+              })}
+            </View>
+          )}
+
+          {viewMode === "progress" && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Training Overview</Text>
+              
+              <View style={styles.statsGrid}>
+                <View style={styles.statCard}>
+                  <Text style={styles.statNumber}>{currentWeek}</Text>
+                  <Text style={styles.statLabel}>Current Week</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <Text style={styles.statNumber}>{Math.round(completionRate * 100)}%</Text>
+                  <Text style={styles.statLabel}>Weekly Progress</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <Text style={styles.statNumber}>{Math.round(dailyRate * 100)}%</Text>
+                  <Text style={styles.statLabel}>Today's Progress</Text>
+                </View>
+                <View style={styles.statCard}>
+                  <Text style={styles.statStage}>{trainingStages[currentStage].name}</Text>
+                  <Text style={styles.statLabel}>Training Stage</Text>
+                </View>
+              </View>
+
+              <View style={styles.weekSelector}>
+                <TouchableOpacity 
+                  onPress={() => setCurrentWeek(Math.max(1, currentWeek - 1))}
+                  style={[styles.weekButton, currentWeek === 1 && styles.weekButtonDisabled]}
+                  disabled={currentWeek === 1}
+                >
+                  <Feather name="chevron-left" size={20} color={currentWeek === 1 ? "#ccc" : "#2563eb"} />
+                </TouchableOpacity>
+                
+                <Text style={styles.weekText}>Week {currentWeek}</Text>
+                
+                <TouchableOpacity 
+                  onPress={() => setCurrentWeek(Math.min(MAX_WEEKS, currentWeek + 1))}
+                  style={[styles.weekButton, currentWeek === MAX_WEEKS && styles.weekButtonDisabled]}
+                  disabled={currentWeek === MAX_WEEKS}
+                >
+                  <Feather name="chevron-right" size={20} color={currentWeek === MAX_WEEKS ? "#ccc" : "#2563eb"} />
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {viewMode === "family" && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Family Members</Text>
+              
+              {family.map(member => (
+                <View key={member.id} style={styles.familyMemberCard}>
+                  {editingMemberId === member.id ? (
+                    <View style={styles.editingContainer}>
+                      <TextInput
+                        style={styles.editingInput}
+                        value={editFamilyName[member.id] || ""}
+                        onChangeText={text => setEditFamilyName({...editFamilyName, [member.id]: text})}
+                        autoFocus
+                        onSubmitEditing={() => handleSaveFamilyMember(member.id, editFamilyName[member.id])}
+                      />
+                      <TouchableOpacity 
+                        onPress={() => handleSaveFamilyMember(member.id, editFamilyName[member.id])}
+                        style={styles.saveButton}
+                      >
+                        <Feather name="check" size={16} color="#22c55e" />
+                      </TouchableOpacity>
+                    </View>
+                  ) : (
+                    <View style={styles.memberInfo}>
+                      <Text style={styles.memberName}>{member.name}</Text>
+                      <View style={styles.memberActions}>
+                        <TouchableOpacity 
+                          onPress={() => handleEditFamilyMember(member.id)}
+                          style={styles.memberButton}
+                        >
+                          <Feather name="edit-2" size={16} color="#666" />
+                        </TouchableOpacity>
+                        <TouchableOpacity 
+                          onPress={() => handleRemoveFamilyMember(member.id)}
+                          style={styles.memberButton}
+                        >
+                          <Feather name="trash-2" size={16} color="#ef4444" />
+                        </TouchableOpacity>
+                      </View>
+                    </View>
+                  )}
+                </View>
+              ))}
+              
+              <View style={styles.addMemberContainer}>
+                <TextInput
+                  style={styles.addMemberInput}
+                  placeholder="Add family member name"
+                  value={newFamilyName}
+                  onChangeText={setNewFamilyName}
+                  onSubmitEditing={handleAddFamilyMember}
+                />
+                <TouchableOpacity onPress={handleAddFamilyMember} style={styles.addButton}>
+                  <Feather name="plus" size={20} color="#fff" />
+                </TouchableOpacity>
+              </View>
+            </View>
+          )}
+
+          {viewMode === "notes" && (
+            <View style={styles.section}>
+              <Text style={styles.sectionTitle}>Family Notes</Text>
+              
+              <View style={styles.addNoteContainer}>
+                <TextInput
+                  style={styles.noteInput}
+                  placeholder="Share a note with your family..."
+                  value={newSharedNote}
+                  onChangeText={setNewSharedNote}
+                  multiline
+                  numberOfLines={3}
+                />
+                <TouchableOpacity onPress={handleAddSharedNote} style={styles.addNoteButton}>
+                  <Text style={styles.addNoteButtonText}>Add Note</Text>
+                </TouchableOpacity>
+              </View>
+
+              {notesLoading ? (
+                <ActivityIndicator size="small" color="#2563eb" style={styles.notesLoader} />
+              ) : (
+                sharedNotes.map(note => (
+                  <View key={note.id} style={styles.noteCard}>
+                    {editingNoteId === note.id ? (
+                      <View>
+                        <TextInput
+                          style={styles.editNoteInput}
+                          value={editingNoteText}
+                          onChangeText={setEditingNoteText}
+                          multiline
+                          autoFocus
+                        />
+                        <View style={styles.editNoteActions}>
+                          <TouchableOpacity 
+                            onPress={() => saveNoteEdit(note.id)}
+                            style={styles.saveNoteButton}
+                          >
+                            <Text style={styles.saveNoteText}>Save</Text>
+                          </TouchableOpacity>
+                          <TouchableOpacity 
+                            onPress={() => {setEditingNoteId(null); setEditingNoteText("");}}
+                            style={styles.cancelNoteButton}
+                          >
+                            <Text style={styles.cancelNoteText}>Cancel</Text>
+                          </TouchableOpacity>
+                        </View>
+                      </View>
+                    ) : (
+                      <View>
+                        <Text style={styles.noteText}>{note.text}</Text>
+                        <View style={styles.noteFooter}>
+                          <Text style={styles.noteAuthor}>
+                            By {note.author} • {new Date(note.timestamp).toLocaleDateString()}
+                            {note.edited && " (edited)"}
+                          </Text>
+                          {note.authorId === currentUserName && (
+                            <TouchableOpacity 
+                              onPress={() => {
+                                setEditingNoteId(note.id);
+                                setEditingNoteText(note.text);
+                              }}
+                              style={styles.editNoteIcon}
+                            >
+                              <Feather name="edit-2" size={14} color="#666" />
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                      </View>
+                    )}
+                  </View>
+                ))
+              )}
+            </View>
+          )}
+        </Animated.ScrollView>
+
+        {/* Bottom Navigation - keeping original style */}
+        <View style={styles.navigationTabs}>
+          {navigationTabs.map(tab => {
+            const IconComponent = tab.iconLib;
+            const isActive = viewMode === tab.key;
+            return (
+              <TouchableOpacity
+                key={tab.key}
+                style={[styles.tab, isActive && styles.activeTab]}
+                onPress={() => handleTabPress(tab.key)}
+              >
+                <IconComponent
+                  name={tab.iconName}
+                  size={24}
+                  color={isActive ? "#2563eb" : "#94a3b8"}
+                />
+              </TouchableOpacity>
+            );
+          })}
+        </View>
+      </View>
+
+      {/* Dog Edit Modal - COMPLETE VERSION */}
+      <Modal visible={editDogModal} animationType="slide" transparent>
+        <View style={styles.modalOverlay}>
+          <View style={styles.modalContent}>
+            <Text style={styles.modalTitle}>Edit Dog Details</Text>
+            
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Dog Name"
+              value={editDogName}
+              onChangeText={setEditDogName}
+            />
+            
+            <View style={styles.pickerContainer}>
+              <Picker
+                selectedValue={editDogBreed}
+                onValueChange={setEditDogBreed}
+                style={styles.picker}
+              >
+                {commonUKBreeds.map(breed => (
+                  <Picker.Item key={breed} label={breed} value={breed} />
+                ))}
+                <Picker.Item label="Other" value="Other" />
+              </Picker>
+            </View>
+            
+                        {editDogBreed === "Other" && (
+              <TextInput
+                style={styles.modalInput}
+                placeholder="Specify breed"
+                value={editDogBreedOther}
+                onChangeText={setEditDogBreedOther}
+              />
+            )}
+            
+            <TextInput
+              style={styles.modalInput}
+              placeholder="Date of Birth (YYYY-MM-DD)"
+              value={editDogDob}
+              onChangeText={setEditDogDob}
+              keyboardType="numeric"
+              maxLength={10}
+            />
+            
+            <View style={styles.modalActions}>
+              <TouchableOpacity 
+                style={styles.modalCancelButton} 
+                onPress={() => setEditDogModal(false)}
+              >
+                <Text style={styles.modalCancelText}>Cancel</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={styles.modalSaveButton} 
+                onPress={saveDogInfo}
+              >
+                <Text style={styles.modalSaveText}>Save</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </View>
+      </Modal>
+    </SafeAreaView>
+  );
+}
+
+// ========== COMPLETE STYLES ==========
+const styles = StyleSheet.create({
+  container: {
+    flex: 1,
+    backgroundColor: '#f8fafc',
+  },
+  mainContent: {
+    flex: 1,
+  },
+  scrollContent: {
+    paddingBottom: 100,
+  },
+  loadingContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#f8fafc',
+  },
+  loadingText: {
+    marginTop: 16,
+    color: '#64748b',
+    fontSize: 16,
+  },
+  setupContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#f8fafc',
+  },
+  welcomeTitle: {
+    fontSize: 28,
+    fontWeight: 'bold',
+    color: '#2563eb',
+    marginBottom: 16,
+    textAlign: 'center',
+  },
+  setupText: {
+    fontSize: 16,
+    color: '#64748b',
+    textAlign: 'center',
+    marginBottom: 8,
+    paddingHorizontal: 20,
+  },
+  setupSubtext: {
+    fontSize: 14,
+    color: '#94a3b8',
+    textAlign: 'center',
+    marginBottom: 32,
+    paddingHorizontal: 20,
+  },
+  setupInput: {
+    width: '100%',
+    maxWidth: 320,
+    height: 50,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 12,
+    paddingHorizontal: 16,
+    marginBottom: 16,
+    backgroundColor: '#fff',
+    fontSize: 16,
+  },
+  disabledInput: {
+    backgroundColor: '#f3f4f6',
+    color: '#9ca3af',
+  },
+  setupButton: {
+    width: '100%',
+    maxWidth: 320,
+    height: 50,
+    backgroundColor: '#2563eb',
+    borderRadius: 12,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  setupButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  pickerContainer: {
+    width: '100%',
+    maxWidth: 320,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 12,
+    marginBottom: 16,
+    backgroundColor: '#fff',
+  },
+  picker: {
+    height: 50,
+  },
+  offlineBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#f59e0b',
+    padding: 12,
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 8,
+  },
+  offlineText: {
+    color: '#fff',
+    marginLeft: 8,
+    flex: 1,
+    fontSize: 14,
+  },
+  celebrationBanner: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    backgroundColor: '#22c55e',
+    padding: 16,
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 12,
+  },
+  celebrationText: {
+    color: '#fff',
+    marginLeft: 12,
+    fontSize: 18,
+    fontWeight: '600',
+    flex: 1,
+  },
+  headerSection: {
+    backgroundColor: '#fff',
+    marginHorizontal: 16,
+    marginTop: 16,
+    borderRadius: 16,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+  },
+  headerContent: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  dogInfo: {
+    flex: 1,
+  },
+  dogName: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#1f2937',
+    marginBottom: 4,
+  },
+  dogDetails: {
+    fontSize: 16,
+    color: '#6b7280',
+    marginBottom: 12,
+  },
+  connectionStatus: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  statusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 6,
+  },
+  online: {
+    backgroundColor: '#22c55e',
+  },
+  offline: {
+    backgroundColor: '#ef4444',
+  },
+  statusText: {
+    fontSize: 12,
+    color: '#6b7280',
+  },
+  editButton: {
+    padding: 8,
+    borderRadius: 8,
+    backgroundColor: '#f3f4f6',
+  },
+  section: {
+    marginHorizontal: 16,
+    marginTop: 20,
+  },
+  sectionHeader: {
+    marginBottom: 16,
+  },
+  sectionTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1f2937',
+    marginBottom: 4,
+  },
+  sectionSubtitle: {
+    fontSize: 14,
+    color: '#6b7280',
+  },
+  progressSection: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  progressHeader: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    marginBottom: 12,
+  },
+  progressTitle: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#374151',
+  },
+  progressPercentage: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#2563eb',
+  },
+  progressBar: {
+    backgroundColor: '#e5e7eb',
+    borderRadius: 4,
+    overflow: 'hidden',
+  },
+  progressFill: {
+    height: '100%',
+    borderRadius: 4,
+  },
+  progressDetails: {
+    fontSize: 12,
+    color: '#6b7280',
+    marginTop: 8,
+  },
+  timeSlotSection: {
+    marginBottom: 24,
+  },
+  timeSlotTitle: {
+    fontSize: 18,
+    fontWeight: '600',
+    color: '#374151',
+    marginBottom: 12,
+  },
+  activityCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+    borderWidth: 1,
+    borderColor: '#f3f4f6',
+  },
+  completedActivity: {
+    backgroundColor: '#f0fdf4',
+    borderColor: '#bbf7d0',
+  },
+  activityContent: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  activityText: {
+    fontSize: 16,
+    color: '#374151',
+    marginLeft: 12,
+    flex: 1,
+  },
+  completedText: {
+    color: '#16a34a',
+    textDecorationLine: 'line-through',
+  },
+  statsGrid: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 12,
+    marginBottom: 24,
+  },
+  statCard: {
+    flex: 1,
+    minWidth: '45%',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  statNumber: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#2563eb',
+    marginBottom: 4,
+  },
+  statStage: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#2563eb',
+    textAlign: 'center',
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#6b7280',
+    textAlign: 'center',
+  },
+  weekSelector: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  weekButton: {
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#f3f4f6',
+  },
+  weekButtonDisabled: {
+    backgroundColor: '#f9fafb',
+  },
+  weekText: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#2563eb',
+  },
+  familyMemberCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  editingContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  editingInput: {
+    flex: 1,
+    fontSize: 16,
+    color: '#374151',
+    borderBottomWidth: 1,
+    borderBottomColor: '#d1d5db',
+    paddingVertical: 8,
+    marginRight: 12,
+  },
+  saveButton: {
+    padding: 8,
+  },
+  memberInfo: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  memberName: {
+    fontSize: 16,
+    color: '#374151',
+    flex: 1,
+  },
+  memberActions: {
+    flexDirection: 'row',
+    gap: 8,
+  },
+  memberButton: {
+    padding: 8,
+    borderRadius: 6,
+    backgroundColor: '#f9fafb',
+  },
+  addMemberContainer: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 16,
+  },
+  addMemberInput: {
+    flex: 1,
+    height: 44,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    paddingHorizontal: 12,
+    backgroundColor: '#fff',
+    fontSize: 16,
+  },
+  addButton: {
+    width: 44,
+    height: 44,
+    backgroundColor: '#2563eb',
+    borderRadius: 8,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  addNoteContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  noteInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 12,
+    fontSize: 16,
+    textAlignVertical: 'top',
+    minHeight: 80,
+  },
+  addNoteButton: {
+    backgroundColor: '#2563eb',
+    borderRadius: 8,
+    padding: 12,
+    alignItems: 'center',
+  },
+  addNoteButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  notesLoader: {
+    marginVertical: 20,
+  },
+  noteCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 16,
+    marginBottom: 12,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.05,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  editNoteInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    padding: 12,
+    fontSize: 16,
+    textAlignVertical: 'top',
+    minHeight: 80,
+    marginBottom: 12,
+  },
+  editNoteActions: {
+    flexDirection: 'row',
+    gap: 12,
+  },
+  saveNoteButton: {
+    backgroundColor: '#22c55e',
+    borderRadius: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  saveNoteText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  cancelNoteButton: {
+    backgroundColor: '#6b7280',
+    borderRadius: 6,
+    paddingHorizontal: 16,
+    paddingVertical: 8,
+  },
+  cancelNoteText: {
+    color: '#fff',
+    fontSize: 14,
+    fontWeight: '600',
+  },
+  noteText: {
+    fontSize: 16,
+    color: '#374151',
+    lineHeight: 24,
+    marginBottom: 12,
+  },
+  noteFooter: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'center',
+  },
+  noteAuthor: {
+    fontSize: 12,
+    color: '#6b7280',
+    flex: 1,
+  },
+  editNoteIcon: {
+    padding: 4,
+  },
+  navigationTabs: {
+    flexDirection: 'row',
+    backgroundColor: '#fff',
+    borderTopWidth: 1,
+    borderTopColor: '#e5e7eb',
+    paddingBottom: Platform.OS === 'ios' ? 20 : 10,
+  },
+  tab: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    paddingVertical: 12,
+  },
+  activeTab: {
+    backgroundColor: '#f0f9ff',
+  },
+  modalOverlay: {
+    flex: 1,
+    backgroundColor: 'rgba(0,0,0,0.5)',
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  modalContent: {
+    backgroundColor: '#fff',
+    borderRadius: 16,
+    padding: 24,
+    width: '90%',
+    maxWidth: 400,
+  },
+  modalTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1f2937',
+    textAlign: 'center',
+    marginBottom: 20,
+  },
+  modalInput: {
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    borderRadius: 8,
+    padding: 12,
+    marginBottom: 16,
+    fontSize: 16,
+  },
+  modalActions: {
+    flexDirection: 'row',
+    gap: 12,
+    marginTop: 8,
+  },
+  modalCancelButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#d1d5db',
+    alignItems: 'center',
+  },
+  modalCancelText: {
+    color: '#6b7280',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  modalSaveButton: {
+    flex: 1,
+    padding: 12,
+    borderRadius: 8,
+    backgroundColor: '#2563eb',
+    alignItems: 'center',
+  },
+  modalSaveText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+  errorContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    padding: 20,
+    backgroundColor: '#f8fafc',
+  },
+  errorTitle: {
+    fontSize: 20,
+    fontWeight: 'bold',
+    color: '#1f2937',
+    marginTop: 16,
+    marginBottom: 8,
+    textAlign: 'center',
+  },
+  errorText: {
+    fontSize: 16,
+    color: '#6b7280',
+    textAlign: 'center',
+    marginBottom: 24,
+  },
+  errorButton: {
+    backgroundColor: '#2563eb',
+    paddingHorizontal: 24,
+    paddingVertical: 12,
+    borderRadius: 8,
+  },
+  errorButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: '600',
+  },
+});
+
+// ========== WRAPPED APP WITH ERROR BOUNDARY ==========
+function App() {
+  return (
+    <ErrorBoundary>
+      <SafeAreaProvider>
+        <MainApp />
+      </SafeAreaProvider>
+    </ErrorBoundary>
+  );
+}
+
+export default App;
